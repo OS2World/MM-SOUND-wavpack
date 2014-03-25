@@ -1,0 +1,7 @@
+Steps to remake:
+	unpack wavpack-4.32.tar.bz2 
+	patch source with patch.dat
+	update env.sh (also conf.cmd, mkall.cmd when need)
+	use conf.cmd as wrapper for './configure'
+	use mkall.cmd as wrapper for 'make all'
+	

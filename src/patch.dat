@@ -1,0 +1,254 @@
+Index: install-sh
+diff -u install-sh:1.1 install-sh:1.2
+--- install-sh:1.1	Wed May 31 00:14:54 2006
++++ install-sh	Wed May 31 23:01:08 2006
+@@ -235,12 +235,12 @@
+     while test $# -ne 0 ; do
+       pathcomp=$pathcomp$1
+       shift
+-      if test ! -d "$pathcomp"; then
++      if test ! -d "$pathcomp/"; then
+         $mkdirprog "$pathcomp"
+ 	# mkdir can fail with a `File exist' error in case several
+ 	# install-sh are creating the directory concurrently.  This
+ 	# is OK.
+-	test -d "$pathcomp" || exit
++	test -d "$pathcomp/" || exit
+       fi
+       pathcomp=$pathcomp/
+     done
+Index: wavpack.c
+diff -u wavpack.c:1.1 wavpack.c:1.2
+--- wavpack.c:1.1	Wed May 31 00:14:54 2006
++++ wavpack.c	Wed May 31 23:01:08 2006
+@@ -22,6 +22,9 @@
+ 
+ #include <string.h>
+ #include <stdlib.h>
++#if defined (__OS2__)
++#include <io.h>
++#endif
+ #include <fcntl.h>
+ #include <math.h>
+ 
+@@ -888,7 +891,7 @@
+ 
+     if (*infilename == '-') {
+ 	infile = stdin;
+-#if defined(WIN32)
++#if defined(WIN32) || defined (__OS2__)
+ 	setmode (fileno (stdin), O_BINARY);
+ #endif
+     }
+@@ -943,7 +946,7 @@
+ 
+     if (*outfilename == '-') {
+ 	wv_file.file = stdout;
+-#if defined(WIN32)
++#if defined(WIN32) || defined(__OS2__)
+ 	setmode (fileno (stdout), O_BINARY);
+ #endif
+     }
+Index: wavpack.h
+diff -u wavpack.h:1.1 wavpack.h:1.2
+--- wavpack.h:1.1	Wed May 31 00:14:54 2006
++++ wavpack.h	Wed May 31 23:01:08 2006
+@@ -676,5 +676,7 @@
+ int WavpackFlushSamples (WavpackContext *wpc);
+ void WavpackUpdateNumSamples (WavpackContext *wpc, void *first_block);
+ void *WavpackGetWrapperLocation (void *first_block, uint32_t *size);
++
++void UTF8ToAnsi (char *string, int len);
+ 
+ #endif
+Index: wputils.c
+diff -u wputils.c:1.1 wputils.c:1.2
+--- wputils.c:1.1	Wed May 31 00:14:54 2006
++++ wputils.c	Wed May 31 23:01:08 2006
+@@ -23,6 +23,8 @@
+ #include <string.h>
+ #include <math.h>
+ #include <sys/stat.h>
++#include <locale.h>
++#include <iconv.h>
+ 
+ #ifdef WIN32
+ #include <io.h>
+@@ -160,7 +162,7 @@
+ 
+     if (*infilename == '-') {
+ 	wv_id = stdin;
+-#if defined(WIN32)
++#if defined(WIN32) || defined(__OS2__)
+ 	setmode (fileno (stdin), O_BINARY);
+ #endif
+     }
+@@ -2661,6 +2663,56 @@
+ }
+ 
+ #endif
++
++// Convert a Unicode UTF-8 format string into its Ansi equivalent. The
++// conversion is done in-place so the maximum length of the string buffer must
++// be specified because the string may become longer or shorter. If the
++// resulting string will not fit in the specified buffer size then it is
++// truncated.
++
++void UTF8ToAnsi (char *string, int len)
++{
++    int max_chars = strlen (string);
++#if defined (WIN32)
++    unsigned short *temp = malloc ((max_chars + 1) * 2);
++    int act_chars = UTF8ToWideChar (string, temp);
++
++    while (act_chars) {
++    memset (string, 0, len);
++
++    if (WideCharToMultiByte (CP_OEMCP, 0, temp, act_chars, string, len - 1, NULL, NULL))
++        break;
++    else
++        act_chars--;
++    }
++
++    if (!act_chars)
++    *string = 0;
++#else
++    char *temp = malloc (len);
++    char *outp = temp;
++    char *inp = string;
++    size_t insize = max_chars;
++    size_t outsize = len - 1;
++    int err = 0;
++    char *old_locale;
++
++    memset(temp, 0, len);
++    old_locale = setlocale (LC_CTYPE, "");
++    iconv_t converter = iconv_open ("", "UTF-8");
++    err = iconv (converter, &inp, &insize, &outp, &outsize);
++    iconv_close (converter);
++    setlocale (LC_CTYPE, old_locale);
++
++    if (err == -1) {
++    free(temp);
++    return;
++    }
++
++    memmove (string, temp, len);
++#endif
++    free (temp);
++}
+ 
+ #endif
+ 
+Index: wputils.h
+diff -u wputils.h:1.1 wputils.h:1.2
+--- wputils.h:1.1	Wed May 31 00:14:54 2006
++++ wputils.h	Wed May 31 23:01:08 2006
+@@ -164,6 +164,7 @@
+ // this function is not actually in wputils.c, but is generally useful
+ 
+ void float_normalize (int32_t *values, int32_t num_values, int delta_exp);
++void UTF8ToAnsi (char *string, int len);
+ 
+ #ifdef __cplusplus
+ }
+Index: wvgain.c
+diff -u wvgain.c:1.1 wvgain.c:1.2
+--- wvgain.c:1.1	Wed May 31 00:14:54 2006
++++ wvgain.c	Wed May 31 23:01:08 2006
+Index: wvunpack.c
+diff -u wvunpack.c:1.1 wvunpack.c:1.2
+--- wvunpack.c:1.1	Wed May 31 00:14:54 2006
++++ wvunpack.c	Wed May 31 23:01:08 2006
+@@ -16,8 +16,6 @@
+ #else
+ #include <sys/stat.h>
+ #include <sys/param.h>
+-#include <locale.h>
+-#include <iconv.h>
+ #if defined (__GNUC__)
+ #include <unistd.h>
+ #include <glob.h>
+@@ -319,7 +317,7 @@
+ 	    fclose (list);
+ 	    free (infilename);
+ 	}
+-#if defined (WIN32)
++#if defined (WIN32) || defined(OS2)
+ 	else if (filespec_wild (infilename)) {
+ 	    FILE *list = fopen (infilename+1, "rt");
+ 	    int di;
+@@ -588,7 +586,7 @@
+ 	else {	// come here to open stdout as destination
+ 
+ 	    outfile = stdout;
+-#if defined(WIN32)
++#if defined(WIN32) || defined(__OS2__)
+ 	    setmode (fileno (stdout), O_BINARY);
+ #endif
+ 
+@@ -878,7 +876,6 @@
+     return dst;
+ }
+ 
+-static UTF8ToAnsi (char *string, int len);
+ 
+ static void dump_summary (WavpackContext *wpc, char *name, FILE *dst)
+ {
+@@ -1029,56 +1026,6 @@
+ 
+     pWide [chrcnt] = 0;
+     return chrcnt;
+-}
+-
+-// Convert a Unicode UTF-8 format string into its Ansi equivalent. The
+-// conversion is done in-place so the maximum length of the string buffer must
+-// be specified because the string may become longer or shorter. If the
+-// resulting string will not fit in the specified buffer size then it is
+-// truncated.
+-
+-static UTF8ToAnsi (char *string, int len)
+-{
+-    int max_chars = strlen (string);
+-#if defined (WIN32)
+-    unsigned short *temp = malloc ((max_chars + 1) * 2);
+-    int act_chars = UTF8ToWideChar (string, temp);
+-
+-    while (act_chars) {
+-	memset (string, 0, len);
+-
+-	if (WideCharToMultiByte (CP_OEMCP, 0, temp, act_chars, string, len - 1, NULL, NULL))
+-	    break;
+-	else
+-	    act_chars--;
+-    }
+-
+-    if (!act_chars)
+-	*string = 0;
+-#else
+-    char *temp = malloc (len);
+-    char *outp = temp;
+-    char *inp = string;
+-    size_t insize = max_chars;
+-    size_t outsize = len - 1;
+-    int err = 0;
+-    char *old_locale;
+-
+-    memset(temp, 0, len);
+-    old_locale = setlocale (LC_CTYPE, "");
+-    iconv_t converter = iconv_open ("", "UTF-8");
+-    err = iconv (converter, &inp, &insize, &outp, &outsize);
+-    iconv_close (converter);
+-    setlocale (LC_CTYPE, old_locale);
+-
+-    if (err == -1) {
+-	free(temp);
+-	return;
+-    }
+-
+-    memmove (string, temp, len);
+-#endif
+-    free (temp);
+ }
+ 
+ //////////////////////////////////////////////////////////////////////////////
